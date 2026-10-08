@@ -1,40 +1,40 @@
 import curses
 import os
 import zipfile
+import pickle
+import pandas as pd
 import input
 import output
-from domains.student import Student
-from domains.course import Course
 
-def save_data(students, courses, marks):
+def save_and_export_data(students, courses, marks):
     save_dir = os.path.dirname(os.path.abspath(__file__))
     
-    students_txt = os.path.join(save_dir, "students.txt")
-    courses_txt = os.path.join(save_dir, "courses.txt")
-    marks_txt = os.path.join(save_dir, "marks.txt")
+    pkl_path = os.path.join(save_dir, "data.pkl")
+    with open(pkl_path, "wb") as f:
+        pickle.dump((students, courses, marks), f)
+        
     dat_file = os.path.join(save_dir, "students.dat")
-
-    with open(students_txt, "w") as f:
-        for s in students:
-            f.write(f"{s.id},{s.name},{s.dob}\n")
+    with zipfile.ZipFile(dat_file, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(pkl_path, arcname="data.pkl")
+    os.remove(pkl_path)
     
-    with open(courses_txt, "w") as f:
-        for c in courses:
-            f.write(f"{c.id},{c.name},{c.credits}\n")
-            
-    with open(marks_txt, "w") as f:
+    std_csv = os.path.join(save_dir, "students.csv")
+    crs_csv = os.path.join(save_dir, "courses.csv")
+    mrk_csv = os.path.join(save_dir, "marks.csv")
+    
+    with open(std_csv, "w", encoding="utf-8") as f:
+        f.write("id,name,dob\n")
+        for s in students: f.write(f"{s.id},{s.name},{s.dob}\n")
+        
+    with open(crs_csv, "w", encoding="utf-8") as f:
+        f.write("id,name,credits\n")
+        for c in courses: f.write(f"{c.id},{c.name},{c.credits}\n")
+        
+    with open(mrk_csv, "w", encoding="utf-8") as f:
+        f.write("course_id,student_id,mark\n")
         for c_id, s_marks in marks.items():
             for s_id, mark in s_marks.items():
                 f.write(f"{c_id},{s_id},{mark}\n")
-                
-    with zipfile.ZipFile(dat_file, "w", zipfile.ZIP_DEFLATED) as zipf:
-        zipf.write(students_txt, arcname="students.txt")
-        zipf.write(courses_txt, arcname="courses.txt")
-        zipf.write(marks_txt, arcname="marks.txt")
-        
-    os.remove(students_txt)
-    os.remove(courses_txt)
-    os.remove(marks_txt)
 
 def load_data(students, courses, marks):
     save_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,54 +42,69 @@ def load_data(students, courses, marks):
     
     if os.path.exists(dat_file):
         with zipfile.ZipFile(dat_file, "r") as zipf:
-            zipf.extractall(path=save_dir)
+            zipf.extract("data.pkl", path=save_dir)
+        
+        pkl_path = os.path.join(save_dir, "data.pkl")
+        if os.path.exists(pkl_path):
+            with open(pkl_path, "rb") as f:
+                loaded_s, loaded_c, loaded_m = pickle.load(f)
+                students.extend(loaded_s)
+                courses.extend(loaded_c)
+                marks.update(loaded_m)
+            os.remove(pkl_path)
+
+def pandas_query(stdscr):
+    stdscr.clear()
+    save_dir = os.path.dirname(os.path.abspath(__file__))
+    std_csv = os.path.join(save_dir, "students.csv")
+    
+    if not os.path.exists(std_csv):
+        stdscr.addstr("CSV file not found. Select (6) to export data first.\nPress any key...")
+        stdscr.getch()
+        return
+        
+    try:
+        df_students = pd.read_csv(std_csv)
+        stdscr.addstr("--- Data loaded into Pandas DataFrame ---\n")
+        stdscr.addstr("Enter query condition (e.g., name == 'Đinh Phương Sơn' or id == 2410874): ")
+        
+        curses.echo()
+        query_str = stdscr.getstr().decode('utf-8')
+        curses.noecho()
+        
+        if query_str:
+            result = df_students.query(query_str)
+            if not result.empty:
+                stdscr.addstr(f"\nQuery Result:\n{result.to_string()}\n")
+            else:
+                stdscr.addstr("\nNo matching results found.\n")
+        else:
+            stdscr.addstr("\nNo condition entered.\n")
             
-        students_txt = os.path.join(save_dir, "students.txt")
-        courses_txt = os.path.join(save_dir, "courses.txt")
-        marks_txt = os.path.join(save_dir, "marks.txt")
-            
-        if os.path.exists(students_txt):
-            with open(students_txt, "r") as f:
-                for line in f:
-                    parts = line.strip().split(",")
-                    if len(parts) == 3:
-                        students.append(Student(parts[0], parts[1], parts[2]))
-            os.remove(students_txt)
-            
-        if os.path.exists(courses_txt):
-            with open(courses_txt, "r") as f:
-                for line in f:
-                    parts = line.strip().split(",")
-                    if len(parts) == 3:
-                        courses.append(Course(parts[0], parts[1], int(parts[2])))
-            os.remove(courses_txt)
-            
-        if os.path.exists(marks_txt):
-            with open(marks_txt, "r") as f:
-                for line in f:
-                    parts = line.strip().split(",")
-                    if len(parts) == 3:
-                        c_id, s_id, mark = parts[0], parts[1], float(parts[2])
-                        if c_id not in marks:
-                            marks[c_id] = {}
-                        marks[c_id][s_id] = mark
-            os.remove(marks_txt)
+    except Exception as e:
+        stdscr.addstr(f"\nQuery syntax error: {e}\n")
+        
+    stdscr.addstr("\nPress any key to return...")
+    stdscr.getch()
 
 def main(stdscr):
     students = []
     courses = []
-    marks = {}
+    marks = {} 
+
     load_data(students, courses, marks)
 
     while True:
         stdscr.clear()
-        stdscr.addstr("--- USTH Student Mark Management (PW5) ---\n")
+        stdscr.addstr("--- USTH Student Mark Management ---\n")
         stdscr.addstr("1. Input Students\n")
         stdscr.addstr("2. Input Courses\n")
         stdscr.addstr("3. Input Marks\n")
         stdscr.addstr("4. List Students (Sorted by GPA)\n")
         stdscr.addstr("5. Show Marks\n")
-        stdscr.addstr("6. Quit & Save Data\n")
+        stdscr.addstr("6. Save & Export CSV Data\n")
+        stdscr.addstr("7. Pandas Query (Extra Task)\n")
+        stdscr.addstr("8. Quit\n")
         stdscr.addstr("Select an option: ")
         
         curses.echo()
@@ -107,8 +122,13 @@ def main(stdscr):
         elif choice == '5':
             output.show_marks(stdscr, students, marks)
         elif choice == '6':
-            # Compress and save data before exiting
-            save_data(students, courses, marks)
+            save_and_export_data(students, courses, marks)
+            stdscr.addstr("\nPickle saved and CSV exported successfully! Press any key...")
+            stdscr.getch()
+        elif choice == '7':
+            pandas_query(stdscr)
+        elif choice == '8':
+            save_and_export_data(students, courses, marks)
             break
 
 if __name__ == "__main__":
